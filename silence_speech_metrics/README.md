@@ -83,12 +83,7 @@ If silence is found, it will print out the computed scores.
 To process an entire folder of .mp4 videos:
 
 ```bash
-python main.py --folder path/to/folder \
-                          --silence_thresh -50 \
-                          --min_silence_len 500 \
-                          --T_sil 0.1 \
-                          --T_speech 0.5 \
-                          --methods threshold difference ratio
+python main.py --folder path/to/folder --silence_thresh -50 --min_silence_len 500 --T_sil 0.1 --T_speech 0.5 --methods threshold difference ratio
 ```
 
 The script will:

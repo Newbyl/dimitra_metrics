@@ -177,7 +177,7 @@ class MouthMovementAssessor:
             temp_audio_path = temp_audio.name
 
         try:
-            audio.write_audiofile(temp_audio_path, codec='pcm_s16le')
+            audio.write_audiofile(temp_audio_path, codec='pcm_s16le', verbose=False, logger=None)
             sound = AudioSegment.from_file(temp_audio_path, format="wav")
 
             # Detect silences
@@ -306,7 +306,7 @@ if __name__ == "__main__":
     assessor = MouthMovementAssessor()
 
     # Path to your video
-    video_path = '../videos/video1.mp4'
+    video_path = '../videos/video2.mp4'
 
     # Compute normalized variances
     var_silence = assessor.compute_mouth_flow_during_silence(video_path, silence_thresh=-50, min_silence_len=500)
