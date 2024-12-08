@@ -3,13 +3,27 @@ import argparse
 from mouth_movement_assessor import MouthMovementAssessor
 from mouth_silence_quality_scores import MouthSilenceQualityScores
 
-def process_single_video(video_path, silence_thresh, min_silence_len, T_sil, T_speech,
+def process_single_video(assessor, scorer, video_path, silence_thresh, min_silence_len, T_sil, T_speech,
                          methods, baseline_silence=None, baseline_speech=None):
     """
     Process a single video to compute variance and selected scores.
     Returns a dict of method_name -> score or None if no silence found.
+    
+    Parameters:
+        assessor (MouthMovementAssessor): The initialized assessor instance (model loaded once).
+        scorer (MouthSilenceQualityScores): The initialized scorer instance.
+        video_path (str): Path to the video.
+        silence_thresh (int): Silence threshold in dBFS.
+        min_silence_len (int): Minimum silence length in ms.
+        T_sil (float): Threshold for silence variance in threshold-based score.
+        T_speech (float): Threshold for speech variance in threshold-based score.
+        methods (list): List of scoring methods to compute.
+        baseline_silence (float or None): Baseline Var(Silence) if using baseline score.
+        baseline_speech (float or None): Baseline Var(Speech) if using baseline score.
+
+    Returns:
+        dict or None: A dictionary of scores keyed by method name, or None if no silence found.
     """
-    assessor = MouthMovementAssessor()
     silence_periods = assessor.get_silence_timestamps(video_path, silence_thresh, min_silence_len)
 
     if not silence_periods:
@@ -19,7 +33,6 @@ def process_single_video(video_path, silence_thresh, min_silence_len, T_sil, T_s
     var_silence = assessor.compute_mouth_flow_during_silence(video_path, silence_thresh, min_silence_len)
     var_speech = assessor.compute_mouth_flow_during_speech(video_path, silence_thresh, min_silence_len)
 
-    scorer = MouthSilenceQualityScores()
     scores = {}
 
     # Compute requested scores
@@ -34,11 +47,26 @@ def process_single_video(video_path, silence_thresh, min_silence_len, T_sil, T_s
 
     return scores
 
-def process_folder(folder_path, silence_thresh, min_silence_len, T_sil, T_speech,
+def process_folder(assessor, scorer, folder_path, silence_thresh, min_silence_len, T_sil, T_speech,
                    methods, baseline_silence=None, baseline_speech=None):
     """
     Process all videos in a folder, compute the average scores for requested methods.
     Only process videos that have silence.
+    
+    Parameters:
+        assessor (MouthMovementAssessor): The initialized assessor instance.
+        scorer (MouthSilenceQualityScores): The initialized scorer instance.
+        folder_path (str): Path to the folder.
+        silence_thresh (int): Silence threshold.
+        min_silence_len (int): Minimum silence length in ms.
+        T_sil (float): Threshold for silence variance.
+        T_speech (float): Threshold for speech variance.
+        methods (list): Scoring methods to use.
+        baseline_silence (float or None): Baseline Var(Silence) if using baseline score.
+        baseline_speech (float or None): Baseline Var(Speech) if using baseline score.
+
+    Returns:
+        tuple: (avg_scores_dict, no_silence_count, video_count)
     """
     aggregate_scores = {m: [] for m in methods}
     no_silence_count = 0
@@ -48,7 +76,7 @@ def process_folder(folder_path, silence_thresh, min_silence_len, T_sil, T_speech
         if fname.lower().endswith(".mp4"):
             video_count += 1
             video_path = os.path.join(folder_path, fname)
-            scores = process_single_video(video_path, silence_thresh, min_silence_len,
+            scores = process_single_video(assessor, scorer, video_path, silence_thresh, min_silence_len,
                                           T_sil, T_speech, methods,
                                           baseline_silence, baseline_speech)
             if scores is None:
@@ -93,8 +121,14 @@ if __name__ == "__main__":
         print("Please specify only one of --video or --folder.")
         exit(1)
 
+    # Instantiate the assessor and scorer once
+    assessor = MouthMovementAssessor()
+    scorer = MouthSilenceQualityScores()
+
     if args.video:
         scores = process_single_video(
+            assessor,
+            scorer,
             args.video, 
             args.silence_thresh, 
             args.min_silence_len,
@@ -115,6 +149,8 @@ if __name__ == "__main__":
                     print(f"  {m}: No score computed.")
     else:
         avg_scores, no_silence_count, video_count = process_folder(
+            assessor,
+            scorer,
             args.folder, 
             args.silence_thresh, 
             args.min_silence_len,
@@ -136,4 +172,3 @@ if __name__ == "__main__":
                     print(f"  {m}: No score computed.")
         else:
             print("No videos with silence found to compute averages.")
-            

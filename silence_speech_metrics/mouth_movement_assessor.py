@@ -10,31 +10,20 @@ from pydub import AudioSegment, silence
 from moviepy.editor import VideoFileClip
 
 class MouthMovementAssessor:
-    """
-    A class for assessing mouth movements during silent and speaking periods in a video.
-    It uses a face segmentation model to isolate the mouth region and optical 
-    flow to measure the magnitude of movement.
-
-    Steps:
-    - Extract silence periods from audio.
-    - Derive speech periods as the complement of silence.
-    - Segment the face in each frame to find the mouth region.
-    - Compute optical flow between consecutive frames to measure pixel movement in the mouth region.
-    - Compute statistics (variance) of mouth movement during silence and speech.
-    """
-
     def __init__(self, 
                  model_name="jonathandinu/face-parsing", 
                  device=None,
                  mouth_label=10):
         """
-        Initialize the MouthMovementAssessor.
+        Initialize the MouthMovementAssessor class.
 
         Parameters:
             model_name (str): Name of the pretrained segmentation model.
-            device (str): Device to run the model on ("cpu", "cuda", etc.). 
-                          If None, it auto-detects.
-            mouth_label (int): Label index corresponding to the mouth in the segmentation output.
+            device (str): Device to run on ("cpu", "cuda", etc.).
+                          If None, it auto-selects based on availability.
+            mouth_label (int): Label index for the mouth in the segmentation.
+                               This parameter is retained for reference, but we
+                               will now include more labels than just this one.
         """
         if device is None:
             device = (
@@ -45,18 +34,19 @@ class MouthMovementAssessor:
         self.device = device
         self.mouth_label = mouth_label
 
-        # Load the segmentation model
+        # Load the segmentation model and processor
         self.image_processor = SegformerImageProcessor.from_pretrained(model_name)
         self.model = SegformerForSemanticSegmentation.from_pretrained(model_name)
         self.model.to(self.device)
         self.model.eval()
 
-        # Initialize TV-L1 optical flow (from the contrib package)
+        # Initialize TV-L1 optical flow from the contrib package
         self.optical_flow = cv2.optflow.DualTVL1OpticalFlow_create()
 
     def segment_face(self, frame):
         """
-        Segment the face in the given frame using the pre-trained model and return the label map.
+        Segment the face in the given frame using the pre-trained model
+        and return the label map.
 
         Parameters:
             frame (np.ndarray): Frame in BGR format.
@@ -82,19 +72,47 @@ class MouthMovementAssessor:
         """
         Compute a binary mask for the mouth region from the segmentation labels.
 
+        Previously, we only used `mouth_label`. Now we consider:
+        10 (mouth), 11 (u_lip), and 12 (l_lip)
+        to include the entire mouth and lips area.
+
         Parameters:
             labels (np.ndarray): Segmentation label map.
 
         Returns:
-            np.ndarray: Binary mask (0/1) where 1 indicates the mouth region.
+            np.ndarray: Binary mask (0/1) where 1 indicates the combined mouth area.
         """
-        mouth_mask = (labels == self.mouth_label).astype(np.uint8)
+        mouth_labels = [10, 11, 12]  # mouth, u_lip, l_lip
+        mouth_mask = np.isin(labels, mouth_labels).astype(np.uint8)
         return mouth_mask
+
+    def compute_face_area(self, labels):
+        """
+        Compute the total area (in pixels) of the "face" region.
+
+        We define face area by selecting labels that correspond to facial features:
+        - skin (1), nose (2), left eye (4), right eye (5),
+          left eyebrow (6), right eyebrow (7),
+          left ear (8), right ear (9),
+          mouth (10), upper lip (11), lower lip (12)
+
+        We exclude hair (13), hat (14), clothing (18), and other non-facial accessories.
+
+        Parameters:
+            labels (np.ndarray): Segmentation label map.
+
+        Returns:
+            int: Number of face pixels.
+        """
+        face_labels = [1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        face_mask = np.isin(labels, face_labels)
+        return np.sum(face_mask)
 
     def compute_mouth_flow(self, prev_frame, curr_frame, prev_labels, curr_labels):
         """
-        Compute the optical flow between two consecutive frames and then measure 
+        Compute the optical flow between two consecutive frames and measure 
         the average flow magnitude in the intersected mouth region.
+        Then normalize by the face area to allow cross-video comparison.
 
         Parameters:
             prev_frame (np.ndarray): Previous frame in BGR format.
@@ -103,7 +121,7 @@ class MouthMovementAssessor:
             curr_labels (np.ndarray): Segmentation labels for the current frame.
 
         Returns:
-            float: Average optical flow magnitude in the mouth region.
+            float: Normalized average optical flow magnitude in the mouth region.
         """
         # Compute mouth masks
         prev_mouth_mask = self.compute_mouth_mask(prev_labels)
@@ -118,7 +136,6 @@ class MouthMovementAssessor:
 
         # Compute optical flow (TV-L1)
         flow = self.optical_flow.calc(prev_gray, curr_gray, None)
-        # flow[...,0]: x displacement, flow[...,1]: y displacement
         flow_x, flow_y = flow[...,0], flow[...,1]
         magnitude = np.sqrt(flow_x**2 + flow_y**2)
 
@@ -126,8 +143,17 @@ class MouthMovementAssessor:
         mouth_magnitude = magnitude[combined_mouth_mask == 1]
         if mouth_magnitude.size == 0:
             return 0.0
-        
-        return np.mean(mouth_magnitude)
+
+        # Compute face area in the current frame for normalization
+        face_area = self.compute_face_area(curr_labels)
+        if face_area > 0:
+            # Normalize by face area
+            normalized_flow = np.mean(mouth_magnitude) / face_area
+        else:
+            # If for some reason no face is detected, fallback to raw mean
+            normalized_flow = np.mean(mouth_magnitude)
+
+        return normalized_flow
 
     def get_silence_timestamps(self, video_path, silence_thresh=-40, min_silence_len=1000):
         """
@@ -154,53 +180,18 @@ class MouthMovementAssessor:
             audio.write_audiofile(temp_audio_path, codec='pcm_s16le')
             sound = AudioSegment.from_file(temp_audio_path, format="wav")
 
+            # Detect silences
             silence_ranges = silence.detect_silence(
                 sound, min_silence_len=min_silence_len, silence_thresh=silence_thresh
             )
-
-            # Convert milliseconds to seconds
+            
+            # Convert silence timestamps from milliseconds to seconds
             silence_timestamps = [(start / 1000, end / 1000) for start, end in silence_ranges]
         finally:
+            # Remove temporary file
             os.unlink(temp_audio_path)
 
         return silence_timestamps
-
-    def get_speech_timestamps(self, video_path, silence_ranges):
-        """
-        Determine speech segments by taking the complement of silence segments within the video duration.
-
-        Parameters:
-            video_path (str): Path to the video file.
-            silence_ranges (list of (float, float)): Silence intervals in seconds.
-
-        Returns:
-            list of (float, float): Speech intervals in seconds.
-        """
-        video = VideoFileClip(video_path)
-        duration = video.duration
-        video.close()
-
-        # If no silence, then entire video is speech
-        if not silence_ranges:
-            return [(0.0, duration)]
-
-        # Sort by start time
-        silence_ranges = sorted(silence_ranges, key=lambda x: x[0])
-
-        speech_intervals = []
-        prev_end = 0.0
-
-        for (start, end) in silence_ranges:
-            # If there is a gap between prev_end and start, that's speech
-            if start > prev_end:
-                speech_intervals.append((prev_end, start))
-            prev_end = end
-
-        # After the last silence, if there's time left, that's also speech
-        if prev_end < duration:
-            speech_intervals.append((prev_end, duration))
-
-        return speech_intervals
 
     def _compute_mouth_flow_for_intervals(self, video_path, intervals):
         """
@@ -208,7 +199,7 @@ class MouthMovementAssessor:
 
         Parameters:
             video_path (str): Path to the video file.
-            intervals (list of (float, float)) : list of start/end times in seconds.
+            intervals (list of (float, float)): List of start/end times in seconds.
 
         Returns:
             float: Variance of mouth flow magnitudes over these intervals.
@@ -226,7 +217,6 @@ class MouthMovementAssessor:
 
             # Set the video to the start frame of the interval
             video.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-
             ret, prev_frame = video.read()
             if not ret:
                 continue
@@ -238,7 +228,7 @@ class MouthMovementAssessor:
                     break
                 curr_labels = self.segment_face(curr_frame)
 
-                # Compute optical flow magnitude for mouth region
+                # Compute optical flow magnitude for mouth region, normalized
                 flow_magnitude = self.compute_mouth_flow(prev_frame, curr_frame, prev_labels, curr_labels)
                 mouth_flow_values.append(flow_magnitude)
 
@@ -250,12 +240,12 @@ class MouthMovementAssessor:
         if not mouth_flow_values:
             return 0.0
 
-        # Compute and return the variance
+        # Compute and return the variance of normalized flow values
         return np.var(mouth_flow_values)
 
     def compute_mouth_flow_during_silence(self, video_path, silence_thresh=-40, min_silence_len=1000):
         """
-        Compute the variance of mouth movement (optical flow) during silent periods of the video.
+        Compute the variance of normalized mouth movement (optical flow) during silent periods of the video.
 
         Parameters:
             video_path (str): Path to the video file.
@@ -272,7 +262,10 @@ class MouthMovementAssessor:
 
     def compute_mouth_flow_during_speech(self, video_path, silence_thresh=-40, min_silence_len=1000):
         """
-        Compute the variance of mouth movement (optical flow) during speech periods of the video.
+        Compute the variance of normalized mouth movement (optical flow) during speech periods of the video.
+
+        Speech periods are defined as the complement of silence periods. If no silence is found,
+        the entire video is considered as a speech period.
 
         Parameters:
             video_path (str): Path to the video file.
@@ -285,32 +278,40 @@ class MouthMovementAssessor:
         silence_periods = self.get_silence_timestamps(
             video_path, silence_thresh=silence_thresh, min_silence_len=min_silence_len
         )
-        speech_periods = self.get_speech_timestamps(video_path, silence_periods)
+
+        # Get total duration to find speech segments
+        video = VideoFileClip(video_path)
+        duration = video.duration
+        video.close()
+
+        if not silence_periods:
+            # No silence means entire video is speech
+            speech_periods = [(0, duration)]
+        else:
+            silence_periods = sorted(silence_periods, key=lambda x: x[0])
+            speech_periods = []
+            prev_end = 0.0
+            for start, end in silence_periods:
+                if start > prev_end:
+                    speech_periods.append((prev_end, start))
+                prev_end = end
+            if prev_end < duration:
+                speech_periods.append((prev_end, duration))
+
         return self._compute_mouth_flow_for_intervals(video_path, speech_periods)
 
-
+# Usage Example (with comments):
 if __name__ == "__main__":
-    assessor = MouthMovementAssessor(
-        model_name="jonathandinu/face-parsing", 
-        device=None, 
-        mouth_label=10
-    )
+    # Create an instance of the assessor
+    assessor = MouthMovementAssessor()
 
-    video_path = 'videos/video1.mp4'
-    silence_thresh = -50
-    min_silence_len = 500  # ms
+    # Path to your video
+    video_path = '../videos/video1.mp4'
 
-    mouth_flow_variance_silence = assessor.compute_mouth_flow_during_silence(
-        video_path,
-        silence_thresh=silence_thresh,
-        min_silence_len=min_silence_len
-    )
+    # Compute normalized variances
+    var_silence = assessor.compute_mouth_flow_during_silence(video_path, silence_thresh=-50, min_silence_len=500)
+    var_speech = assessor.compute_mouth_flow_during_speech(video_path, silence_thresh=-50, min_silence_len=500)
 
-    mouth_flow_variance_speech = assessor.compute_mouth_flow_during_speech(
-        video_path,
-        silence_thresh=silence_thresh,
-        min_silence_len=min_silence_len
-    )
-
-    print("Mouth flow variance during silence:", mouth_flow_variance_silence)
-    print("Mouth flow variance during speech:", mouth_flow_variance_speech)
+    # Print out the results
+    print(f"Normalized variance during silence: {var_silence}")
+    print(f"Normalized variance during speech: {var_speech}")
