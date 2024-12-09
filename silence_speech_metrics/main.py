@@ -2,6 +2,7 @@ import os
 import argparse
 from mouth_movement_assessor import MouthMovementAssessor
 from mouth_silence_quality_scores import MouthSilenceQualityScores
+from tqdm import tqdm
 
 def process_single_video(assessor, scorer, video_path, silence_thresh, min_silence_len, T_sil, T_speech,
                          methods, baseline_silence=None, baseline_speech=None):
@@ -72,7 +73,7 @@ def process_folder(assessor, scorer, folder_path, silence_thresh, min_silence_le
     no_silence_count = 0
     video_count = 0
 
-    for fname in os.listdir(folder_path):
+    for fname in tqdm(os.listdir(folder_path)):
         if fname.lower().endswith(".mp4"):
             video_count += 1
             video_path = os.path.join(folder_path, fname)

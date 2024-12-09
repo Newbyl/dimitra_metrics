@@ -34,7 +34,7 @@ class MouthSilenceQualityScores:
         # If test_ratio is off by, say, 20%, score ≈ 0.8.
         return 1 - abs((test_ratio / baseline_ratio) - 1)
     
-    def compute_quality_score(self, var_silence, var_speech, T_sil=0.1, T_speech=0.5):
+    def compute_quality_score(self, var_silence, var_speech, T_sil=0.18, T_speech=0.4):
         # Compute silence score (0 to 1)
         # 1 means perfect (no movement in silence), 0 means very poor (too much movement)
         silence_score = 1 - (var_silence / T_sil)

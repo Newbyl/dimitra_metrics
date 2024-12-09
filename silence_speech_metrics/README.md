@@ -58,7 +58,7 @@ The approach uses the following steps:
 Install via pip:
 
 ```bash
-pip install torch transformers opencv-contrib-python moviepy pydub numpy Pillow
+pip install torch transformers opencv-contrib-python moviepy==1.0.3 pydub numpy Pillow
 ```
 
 (Ensure you have a Python environment set up. GPU usage depends on your hardware and PyTorch installation.)
@@ -70,10 +70,7 @@ pip install torch transformers opencv-contrib-python moviepy pydub numpy Pillow
 To process a single video and compute the threshold-based and ratio scores:
 
 ```bash
-python main.py --video path/to/video.mp4 \
-                          --silence_thresh -50 \
-                          --min_silence_len 500 \
-                          --methods threshold ratio
+python main.py --video path/to/video.mp4 --silence_thresh -50 --min_silence_len 500 -methods threshold ratio difference
 ```
 
 If silence is found, it will print out the computed scores.
