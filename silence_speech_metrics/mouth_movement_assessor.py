@@ -28,7 +28,7 @@ class MouthMovementAssessor:
                  device=None,
                  mouth_label=10,
                  batch_size=16,  # Adjust based on GPU memory
-                 frame_resize=(512, 512)):  # Increased frame size for better detail
+                 frame_resize=(512, 512)):
         """
         Initialize the MouthMovementAssessor class.
 

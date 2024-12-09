@@ -70,7 +70,7 @@ pip install torch transformers opencv-contrib-python moviepy==1.0.3 pydub numpy 
 To process a single video and compute the threshold-based and ratio scores:
 
 ```bash
-python main.py --video path/to/video.mp4 --silence_thresh -50 --min_silence_len 500 -methods threshold ratio difference
+python main.py --video path/to/video.mp4 --silence_thresh -50 --min_silence_len 500 --methods threshold ratio difference
 ```
 
 If silence is found, it will print out the computed scores.
@@ -87,7 +87,7 @@ The script will:
 
 - Check each video for silence.
 - Compute mouth movement variances during silence and speech.
--  Compute the requested scores.
+- Compute the requested scores.
 - Print the average scores across all videos with silence.
 - Report how many videos had no silence and were skipped.
 
