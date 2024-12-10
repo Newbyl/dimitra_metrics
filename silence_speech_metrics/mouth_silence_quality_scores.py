@@ -4,8 +4,8 @@ class MouthSilenceQualityScores:
         Score = Var(Speech) / (Var(Silence) + epsilon)
         Higher scores mean more movement during speech than silence.
         """
-        #return var_speech / (var_silence + epsilon)
-        return var_silence / (var_speech + epsilon)
+        return var_speech / (var_silence + epsilon)
+        
 
     def compute_difference_score(self, var_silence, var_speech, epsilon=1e-6):
         """

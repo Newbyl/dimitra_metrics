@@ -43,8 +43,8 @@ def process_single_video(assessor, scorer, video_path, silence_thresh, min_silen
         scores['difference'] = scorer.compute_difference_score(var_silence, var_speech)
     if 'baseline' in methods and baseline_silence is not None and baseline_speech is not None:
         scores['baseline'] = scorer.compute_baseline_score(var_silence, var_speech, baseline_silence, baseline_speech)
-    if 'threshold' in methods:
-        scores['threshold'] = scorer.compute_quality_score(var_silence, var_speech, T_sil, T_speech)
+    if 'quality' in methods:
+        scores['quality'] = scorer.compute_quality_score(var_silence, var_speech, T_sil, T_speech)
 
     return scores
 
@@ -108,8 +108,8 @@ if __name__ == "__main__":
     parser.add_argument("--min_silence_len", type=int, default=1000, help="Min silence length in ms")
     parser.add_argument("--T_sil", type=float, default=0.1, help="Threshold for silence variance")
     parser.add_argument("--T_speech", type=float, default=0.5, help="Threshold for speech variance")
-    parser.add_argument("--methods", nargs='*', default=["threshold"], 
-                        choices=["ratio", "difference", "baseline", "threshold"],
+    parser.add_argument("--methods", nargs='*', default=["quality"], 
+                        choices=["ratio", "difference", "baseline", "quality"],
                         help="Which scoring methods to compute.")
     parser.add_argument("--baseline_silence", type=float, help="Baseline Var(Silence) for baseline score")
     parser.add_argument("--baseline_speech", type=float, help="Baseline Var(Speech) for baseline score")
