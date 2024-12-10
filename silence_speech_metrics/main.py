@@ -74,6 +74,9 @@ def process_folder(assessor, scorer, folder_path, silence_thresh, min_silence_le
     video_count = 0
 
     for fname in tqdm(os.listdir(folder_path)):
+        if video_count == 100:
+            break
+
         if fname.lower().endswith(".mp4"):
             video_count += 1
             video_path = os.path.join(folder_path, fname)
@@ -85,7 +88,7 @@ def process_folder(assessor, scorer, folder_path, silence_thresh, min_silence_le
             else:
                 for m in methods:
                     aggregate_scores[m].append(scores[m])
-
+        
     # Compute averages
     avg_scores = {}
     for m in methods:
@@ -123,7 +126,7 @@ if __name__ == "__main__":
         exit(1)
 
     # Instantiate the assessor and scorer once
-    assessor = MouthMovementAssessor()
+    assessor = MouthMovementAssessor(frame_resize=(512, 512))
     scorer = MouthSilenceQualityScores()
 
     if args.video:

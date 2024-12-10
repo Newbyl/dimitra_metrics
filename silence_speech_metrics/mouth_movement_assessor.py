@@ -10,18 +10,6 @@ from pydub import AudioSegment, silence
 from moviepy.editor import VideoFileClip
 from tqdm import tqdm  # For progress bars
 
-import os
-import tempfile
-import numpy as np
-import cv2
-import torch
-from torch import nn
-from transformers import SegformerImageProcessor, SegformerForSemanticSegmentation
-from PIL import Image
-from pydub import AudioSegment, silence
-from moviepy.editor import VideoFileClip
-from tqdm import tqdm  # For progress bars
-
 class MouthMovementAssessor:
     def __init__(self, 
                  model_name="jonathandinu/face-parsing", 
@@ -70,7 +58,10 @@ class MouthMovementAssessor:
             list of np.ndarray: List of segmentation label maps.
         """
         # Preprocess frames: BGR to RGB, resize, and convert to PIL Images
-        images = [Image.fromarray(cv2.cvtColor(cv2.resize(frame, self.frame_resize), cv2.COLOR_BGR2RGB)) for frame in frames]
+        images = [
+            Image.fromarray(cv2.cvtColor(cv2.resize(frame, self.frame_resize), cv2.COLOR_BGR2RGB)) 
+            for frame in frames
+        ]
         inputs = self.image_processor(images=images, return_tensors="pt").to(self.device)
 
         with torch.no_grad():
@@ -121,7 +112,13 @@ class MouthMovementAssessor:
         #cv2.imwrite("combined_mouth_mask.png", combined_mouth_mask * 255)
 
         # Extract magnitudes in the mouth region only
-        mouth_magnitude = magnitude[combined_mouth_mask == 1]
+        try:
+            mouth_magnitude = magnitude[combined_mouth_mask == 1]
+        except IndexError as e:
+            print(f"Error extracting mouth magnitude: {e}")
+            print(f"Magnitude shape: {magnitude.shape}, Mask shape: {combined_mouth_mask.shape}")
+            return 0.0
+
         if mouth_magnitude.size == 0:
             return 0.0
 
@@ -173,7 +170,7 @@ class MouthMovementAssessor:
         total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
         mouth_flow_values = []
 
-        for start, end in tqdm(intervals, desc="Processing intervals"):
+        for start, end in intervals:
             start_frame = int(start * fps)
             end_frame = int(end * fps)
 
@@ -210,6 +207,8 @@ class MouthMovementAssessor:
                 ret, prev_frame = video.read()
                 if not ret:
                     continue
+                # Resize the frame to match segmentation size
+                prev_frame = cv2.resize(prev_frame, self.frame_resize)
                 prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
 
                 # Set the video to the current frame
@@ -217,6 +216,8 @@ class MouthMovementAssessor:
                 ret, curr_frame = video.read()
                 if not ret:
                     continue
+                # Resize the frame to match segmentation size
+                curr_frame = cv2.resize(curr_frame, self.frame_resize)
                 curr_gray = cv2.cvtColor(curr_frame, cv2.COLOR_BGR2GRAY)
 
                 # Compute mouth flow
@@ -230,7 +231,7 @@ class MouthMovementAssessor:
 
         # Compute and return the variance of normalized flow values
         variance = np.var(mouth_flow_values)
-        #print(f"Computed Variance: {variance}")
+        print(f"Computed Variance: {variance}")
         return variance
 
     def compute_mouth_flow_during_silence(self, video_path, silence_thresh=-40, min_silence_len=1000):
@@ -282,8 +283,8 @@ if __name__ == "__main__":
     assessor = MouthMovementAssessor(
         model_name="jonathandinu/face-parsing",
         device="cuda",  # Ensure CUDA is available for GPU acceleration
-        batch_size=1,  # Increase batch size if GPU memory allows
-        frame_resize=(512, 512)  # Resize frames for faster processing
+        batch_size=1,  # Adjust based on GPU memory; batch_size=1 is safe
+        frame_resize=(512, 512)  # Resize frames to 512x512
     )
 
     # Path to your video
