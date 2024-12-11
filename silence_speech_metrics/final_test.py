@@ -255,10 +255,10 @@ if __name__ == "__main__":
         device="cuda",
         batch_size=1,
         frame_resize=(512, 512),
-        frame_sampling_rate=0.5
+        frame_sampling_rate=1
     )
 
-    video_path = '../videos/comp/dimitra.mp4'
+    video_path = '../videos/comp/dreamtalk.mp4'
 
     var_silence, entropy_silence = assessor.compute_mouth_flow_during_silence(
         video_path, silence_thresh=-50, min_silence_len=500
