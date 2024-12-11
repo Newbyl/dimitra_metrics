@@ -114,7 +114,7 @@ class MouthMovementAssessor:
         if len(values) == 0:
             return 0.0
         # Compute a histogram
-        hist, _ = np.histogram(values, bins=num_bins, density=True)
+        hist, _ = np.histogram(values, density=True)
         # Remove zero bins to avoid log issues
         hist = hist[hist > 0]
         if len(hist) == 0:
@@ -241,10 +241,13 @@ class MouthSilenceQualityScores:
         # If both entropies are near zero, final score ~0. If they are larger, final score remains closer to ratio_score.
         # You might want to normalize or scale entropy based on observed ranges.
         # For now, assume entropy values as is. You can also add normalization if needed.
+        
         entropy_factor = (entropy_silence + entropy_speech) / 2.0
+        print("entrop fact :" , entropy_factor)
+        
 
         # Combine them. For example, just multiply:
-        final_score = ratio_score * entropy_factor
+        final_score = ratio_score * (entropy_factor * 0.5)
         return final_score
 
 
@@ -258,7 +261,7 @@ if __name__ == "__main__":
         frame_sampling_rate=0.5
     )
 
-    video_path = '../videos/comp/dimitra.mp4'
+    video_path = '../videos/comp/gt.mp4'
 
     var_silence, entropy_silence = assessor.compute_mouth_flow_during_silence(
         video_path, silence_thresh=-50, min_silence_len=500
