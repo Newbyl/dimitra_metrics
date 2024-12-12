@@ -1,13 +1,17 @@
 import argparse
 import cv2
-import dlib
 import numpy as np
-from imutils import face_utils
-from scipy.stats import entropy as scipy_entropy
-from scipy.ndimage import uniform_filter1d
+import torch
+from torch import nn
+from transformers import SegformerImageProcessor, SegformerForSemanticSegmentation
+from PIL import Image
 import matplotlib.pyplot as plt
 import os
 from tqdm import tqdm
+import tempfile
+import shutil
+
+from scipy.stats import entropy
 
 def compute_entropy(prob_distribution):
     """
@@ -18,59 +22,63 @@ def compute_entropy(prob_distribution):
     entropy_val = -np.sum(prob_distribution * np.log2(prob_distribution))
     return entropy_val
 
-def calculate_mouth_movement(current_landmarks, previous_landmarks):
+def calculate_mouth_movement(current_mask, previous_mask):
     """
-    Calculate the average Euclidean distance between current and previous mouth landmarks.
+    Calculate the movement of the mouth region between current and previous masks.
+    Here, movement is quantified using Intersection over Union (IoU).
     """
-    if previous_landmarks is None:
+    if previous_mask is None:
         return np.nan
-    # Compute Euclidean distances for each mouth landmark
-    distances = np.linalg.norm(current_landmarks - previous_landmarks, axis=1)
-    # Return the average movement
-    return np.mean(distances)
+    # Compute Intersection and Union
+    intersection = np.logical_and(current_mask, previous_mask).sum()
+    union = np.logical_or(current_mask, previous_mask).sum()
+    if union == 0:
+        return np.nan
+    iou = intersection / union
+    # Movement can be defined as 1 - IoU (higher value indicates more movement)
+    movement = 1 - iou
+    return movement
 
-def plot_landmarks(image, landmarks, save_path=None):
+def plot_mask(image, mask, save_path=None):
     """
-    Plot facial landmarks on an image.
+    Overlay the mask on the image for visualization.
     
     Parameters:
-    - image: The image on which to plot landmarks.
-    - landmarks: Array of (x, y) coordinates for landmarks.
+    - image: The original image (BGR format).
+    - mask: Binary mask of the mouth region.
     - save_path: If provided, saves the image to this path.
     """
-    # Make a copy of the image to draw landmarks
-    annotated_image = image.copy()
-    
-    # Draw each landmark as a small circle
-    for (x, y) in landmarks:
-        cv2.circle(annotated_image, (x, y), 2, (0, 255, 0), -1)
-    
+    # Create a colored mask
+    colored_mask = np.zeros_like(image)
+    colored_mask[:, :, 1] = mask * 255  # Green color for mouth
+
+    # Overlay the mask on the image
+    annotated_image = cv2.addWeighted(image, 0.7, colored_mask, 0.3, 0)
+
     # Convert BGR to RGB for matplotlib
     annotated_image = cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)
-    
-    # Plot the image with landmarks
+
+    # Plot the image with mask
     plt.figure(figsize=(6, 6))
     plt.imshow(annotated_image)
-    plt.title('Mouth Landmarks')
+    plt.title('Mouth Segmentation Mask')
     plt.axis('off')
-    
+
     # Save or show the plot
     if save_path:
         plt.savefig(save_path)
-        print(f"Annotated landmarks image saved to {save_path}")
+        print(f"Annotated mask image saved to {save_path}")
     plt.show()
 
 def main():
-    parser = argparse.ArgumentParser(description="Compute entropy of mouth movements in a video using dlib facial landmarks.")
+    parser = argparse.ArgumentParser(description="Compute entropy of mouth movements in a video using semantic segmentation.")
     parser.add_argument("video_path", type=str, help="Path to the input video file.")
-    parser.add_argument("--shape_predictor", type=str, default="shape_predictor_68_face_landmarks.dat",
-                        help="Path to dlib's shape predictor model file.")
     parser.add_argument("--output", type=str, default=None,
                         help="Path to save the entropy value. If not set, prints to console.")
     parser.add_argument("--bins", type=int, default=30,
                         help="Number of bins for histogram when computing entropy.")
     parser.add_argument("--visualize", action='store_true',
-                        help="Visualize mouth movement over time, histogram, and landmarks.")
+                        help="Visualize mouth movement over time, histogram, and segmentation masks.")
     parser.add_argument("--save_plot", type=str, default=None,
                         help="Path to save the visualization plots if --visualize is set.")
     # Arguments for resizing
@@ -81,17 +89,29 @@ def main():
     parser.add_argument("--interpolation", type=str, default="linear",
                         choices=["nearest", "linear", "area", "cubic", "lanczos"],
                         help="Interpolation method for resizing.")
+    # New argument for output video
+    parser.add_argument("--output_video", type=str, default=None,
+                        help="Path to save the output video with annotated mouth masks.")
     args = parser.parse_args()
 
-    # Check if shape predictor file exists
-    if not os.path.isfile(args.shape_predictor):
-        print(f"Error: Shape predictor file '{args.shape_predictor}' not found.")
-        print("Download it from http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2 and extract.")
-        return
+    # Determine device
+    device = (
+        "cuda"
+        # Device for NVIDIA or AMD GPUs
+        if torch.cuda.is_available()
+        else "mps"
+        # Device for Apple Silicon (Metal Performance Shaders)
+        if torch.backends.mps.is_available()
+        else "cpu"
+    )
+    print(f"Using device: {device}")
 
-    # Initialize dlib's face detector (HOG-based) and the facial landmark predictor
-    detector = dlib.get_frontal_face_detector()
-    predictor = dlib.shape_predictor(args.shape_predictor)
+    # Load SegFormer model and processor
+    print("Loading SegFormer model...")
+    image_processor = SegformerImageProcessor.from_pretrained("jonathandinu/face-parsing")
+    model = SegformerForSemanticSegmentation.from_pretrained("jonathandinu/face-parsing")
+    model.to(device)
+    model.eval()
 
     # Open video file
     cap = cv2.VideoCapture(args.video_path)
@@ -102,14 +122,31 @@ def main():
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     print(f"Processing {frame_count} frames...")
 
-    movement_values = []
-    frame_indices = []
-    previous_landmarks = None
-    sample_frame = None
-    sample_landmarks = None
+    # Get video properties
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    original_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    original_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    frame_size = (args.width, args.height)
 
-    # Define mouth landmark indices (48-67 in 0-based indexing)
-    (mStart, mEnd) = face_utils.FACIAL_LANDMARKS_IDXS["mouth"]
+    # Determine output video path
+    if args.output_video:
+        output_video_path = args.output_video
+    else:
+        input_dir, input_filename = os.path.split(args.video_path)
+        name, ext = os.path.splitext(input_filename)
+        output_video_path = os.path.join(input_dir, f"{name}_annotated.mp4")
+
+    # Create temporary directory to save annotated frames
+    temp_dir = tempfile.mkdtemp(prefix="annotated_frames_")
+    print(f"Temporary directory for annotated frames: {temp_dir}")
+
+    movement_values = []
+    previous_mask = None
+    sample_frame = None
+    sample_mask = None
+
+    # Define mouth labels based on provided mapping
+    mouth_labels = [11, 12]  # mouth, upper lip, lower lip
 
     # Map interpolation method string to OpenCV flag
     interpolation_methods = {
@@ -121,53 +158,84 @@ def main():
     }
     interpolation_flag = interpolation_methods.get(args.interpolation, cv2.INTER_LINEAR)
 
+    # Process each frame
     for i in tqdm(range(frame_count), desc="Frames"):
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Upsample the frame to target resolution
-        resized_frame = cv2.resize(frame, (args.width, args.height), interpolation=interpolation_flag)
+        # Resize the frame
+        resized_frame = cv2.resize(frame, frame_size, interpolation=interpolation_flag)
 
-        # Convert to grayscale for face detection
-        gray = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2GRAY)
+        # Convert frame to PIL Image for segmentation
+        pil_image = Image.fromarray(cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB))
 
-        # Detect faces in the grayscale frame
-        rects = detector(gray, 0)
+        # Perform segmentation
+        with torch.no_grad():
+            inputs = image_processor(images=pil_image, return_tensors="pt").to(device)
+            outputs = model(**inputs)
+            logits = outputs.logits  # shape (batch_size, num_labels, H, W)
+            upsampled_logits = nn.functional.interpolate(logits,
+                                                         size=resized_frame.shape[:2],  # H x W
+                                                         mode='bilinear',
+                                                         align_corners=False)
+            labels = upsampled_logits.argmax(dim=1)[0].cpu().numpy()
 
-        if len(rects) == 0:
-            # No face detected in this frame
-            movement_values.append(np.nan)
-            previous_landmarks = None  # Reset previous landmarks
-            continue
-
-        # Assuming the first detected face is the target
-        rect = rects[0]
-        shape = predictor(gray, rect)
-        shape = face_utils.shape_to_np(shape)
-
-        # Extract mouth coordinates
-        mouth = shape[mStart:mEnd]
+        # Create mouth mask
+        mouth_mask = np.isin(labels, mouth_labels).astype(np.uint8)  # Binary mask
 
         # Calculate mouth movement
-        movement = calculate_mouth_movement(mouth, previous_landmarks)
+        movement = calculate_mouth_movement(mouth_mask, previous_mask)
         movement_values.append(movement)
-        frame_indices.append(i)
 
-        # Save sample frame and landmarks for visualization (first valid frame)
-        if sample_frame is None:
-            sample_frame = resized_frame.copy()
-            sample_landmarks = mouth.copy()
+        # Update previous mask
+        previous_mask = mouth_mask
 
-        # Update previous landmarks
-        previous_landmarks = mouth
+        # Annotate frame with mouth mask
+        annotated_frame = resized_frame.copy()
+        colored_mask = np.zeros_like(annotated_frame)
+        colored_mask[:, :, 1] = mouth_mask * 255  # Green color for mouth
+        annotated_frame = cv2.addWeighted(annotated_frame, 0.7, colored_mask, 0.3, 0)
+
+        # Save annotated frame
+        frame_filename = os.path.join(temp_dir, f"frame_{i:06d}.png")
+        cv2.imwrite(frame_filename, annotated_frame)
+
+        # Save sample frame and mask for visualization (first valid frame)
+        if sample_frame is None and mouth_mask.sum() > 0:
+            sample_frame = annotated_frame.copy()
+            sample_mask = mouth_mask.copy()
 
     cap.release()
+
+    # Create video from annotated frames
+    print("Creating video from annotated frames...")
+    # Define the codec and create VideoWriter object
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # You can choose other codecs
+    out = cv2.VideoWriter(output_video_path, fourcc, fps, frame_size)
+
+    # Get list of frame filenames sorted in order
+    frame_files = sorted([f for f in os.listdir(temp_dir) if f.endswith('.png')])
+
+    for frame_file in tqdm(frame_files, desc="Writing video"):
+        frame_path = os.path.join(temp_dir, frame_file)
+        frame = cv2.imread(frame_path)
+        if frame is None:
+            print(f"Warning: Could not read {frame_path}. Skipping.")
+            continue
+        out.write(frame)
+
+    out.release()
+    print(f"Annotated video saved to {output_video_path}")
+
+    # Delete temporary directory
+    shutil.rmtree(temp_dir)
+    print(f"Temporary images deleted from {temp_dir}")
 
     # Convert movement list to numpy array
     movement_values = np.array(movement_values)
 
-    # Handle frames where no face was detected or no movement was calculated
+    # Handle frames where no mouth was detected or no movement was calculated
     valid_movements = movement_values[~np.isnan(movement_values)]
     if len(valid_movements) == 0:
         print("No valid mouth movement measurements detected.")
@@ -182,7 +250,7 @@ def main():
 
     # Compute entropy
     entropy_val = compute_entropy(prob_distribution)
-    entropy_scipy = scipy_entropy(prob_distribution, base=2)
+    entropy_scipy = entropy(prob_distribution, base=2)
 
     # Output entropy
     if args.output:
@@ -201,9 +269,9 @@ def main():
 
         # Plot Mouth Movement over time
         plt.figure(figsize=(12, 6))
-        plt.plot(smoothed_movements, label='Smoothed Mouth Movement', color='magenta')
+        plt.plot(smoothed_movements, label='Smoothed Mouth Movement (1 - IoU)', color='magenta')
         plt.xlabel('Frame')
-        plt.ylabel('Average Mouth Landmark Movement (pixels)')
+        plt.ylabel('Mouth Movement (1 - IoU)')
         plt.title('Mouth Movement Over Time')
         plt.legend()
         if args.save_plot:
@@ -213,17 +281,28 @@ def main():
         # Plot histogram
         plt.figure(figsize=(8, 6))
         plt.hist(smoothed_movements, bins=args.bins, alpha=0.7, color='orange', edgecolor='black')
-        plt.xlabel('Average Mouth Landmark Movement (pixels)')
+        plt.xlabel('Mouth Movement (1 - IoU)')
         plt.ylabel('Frequency')
         plt.title('Histogram of Smoothed Mouth Movement Values')
         if args.save_plot:
             plt.savefig(os.path.join(args.save_plot, "mouth_movement_histogram.png"))
         plt.show()
 
-        # Plot landmarks on sample frame
-        if sample_frame is not None and sample_landmarks is not None:
-            landmarks_image_path = os.path.join(args.save_plot, "mouth_landmarks_sample.png") if args.save_plot else None
-            plot_landmarks(sample_frame, sample_landmarks, save_path=landmarks_image_path)
+        # Plot segmentation mask on sample frame
+        if sample_frame is not None and sample_mask is not None:
+            landmarks_image_path = os.path.join(args.save_plot, "mouth_mask_sample.png") if args.save_plot else None
+            plot_mask(sample_frame, sample_mask, save_path=landmarks_image_path)
+
+def uniform_filter1d(array, size=5):
+    """
+    Apply a uniform filter (moving average) to smooth the array.
+    """
+    if len(array) < size:
+        return array
+    cumsum = np.cumsum(np.insert(array, 0, 0)) 
+    return (cumsum[size:] - cumsum[:-size]) / size
 
 if __name__ == "__main__":
     main()
+
+# python movements_variety.py ..videos/comp/dreamtalk.mp4 --output_video dreamtalk_seg.mp4
