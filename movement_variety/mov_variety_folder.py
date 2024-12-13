@@ -229,7 +229,9 @@ def process_video(video_path, args, image_processor, model, device):
         return None
 
     # Optional: Apply temporal smoothing to reduce noise
-    smoothed_movements = uniform_filter1d_custom(valid_movements, size=5)
+    # smoothed_movements = uniform_filter1d_custom(valid_movements, size=5)
+    smoothed_movements = valid_movements
+
 
     # Compute histogram
     hist, bin_edges = np.histogram(smoothed_movements, bins=args.bins, density=False)
@@ -582,9 +584,9 @@ def main_dt():
 
 
 if __name__ == "__main__":
-    main()
+    #main()
     #main_dim()
-    #main_dt()
+    main_dt()
 
 # Example Usage:
 # python mov_variety_folder.py /data/stars/share/CelebV-HQ/path_to_videos_512_25fps_for_inf/train --num_videos 100

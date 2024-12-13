@@ -241,8 +241,9 @@ def main():
         print("No valid mouth movement measurements detected.")
         return
 
-    # Optional: Apply temporal smoothing to reduce noise
-    smoothed_movements = uniform_filter1d(valid_movements, size=5)
+    # Apply temporal smoothing to reduce noise
+    # smoothed_movements = uniform_filter1d(valid_movements, size=5)
+    smoothed_movements = valid_movements
 
     # Compute histogram
     hist, bin_edges = np.histogram(smoothed_movements, bins=args.bins, density=False)
@@ -251,6 +252,7 @@ def main():
     # Compute entropy
     entropy_val = compute_entropy(prob_distribution)
     entropy_scipy = entropy(prob_distribution, base=2)
+    variance = np.var(smoothed_movements)
 
     # Output entropy
     if args.output:
@@ -260,6 +262,7 @@ def main():
     else:
         print(f"Entropy of mouth movements: {entropy_val}")
         print(f"Entropy of mouth movements (scipy): {entropy_scipy}")
+        print(f"Variance : {variance}")
 
     # Visualization
     if args.visualize:
