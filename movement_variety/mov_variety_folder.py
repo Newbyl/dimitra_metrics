@@ -12,6 +12,28 @@ import tempfile
 import shutil
 from scipy.stats import entropy as scipy_entropy
 
+def read_paths(file_path):
+    """
+    Reads paths from a text file and returns them as a list.
+
+    :param file_path: Path to the text file containing paths.
+    :return: List of paths.
+    """
+    paths = []
+    try:
+        with open(file_path, 'r') as file:
+            for line in file:
+                # Strip whitespace and ignore empty lines or comments
+                stripped_line = line.strip()
+                if stripped_line and not stripped_line.startswith('#'):
+                    paths.append(stripped_line)
+    except FileNotFoundError:
+        print(f"Error: The file {file_path} does not exist.")
+    except IOError as e:
+        print(f"IO error occurred: {e}")
+    
+    return paths
+
 def compute_entropy(prob_distribution):
     """
     Compute the Shannon entropy of a probability distribution.
@@ -350,14 +372,19 @@ def main():
 
     entropy_results = []
 
-    same_examples = ["TALKING_azkJMOVoNys_2.mp4", "TALKING_s2eUj69OEqs_10.mp4", "TALKING_f9nhLeM03o8_9.mp4", 
-                     "TALKING_EcZWbL5VcDA_0.mp4", "TALKING_0KbxR3VjAg8_4.mp4", "TALKING_YpiB9y55sO8_0.mp4", 
-                     "TALKING_qw62N4v8Cwo_0.mp4", "TALKING_UqO0E4rcI5k_6.mp4", "TALKING_EgDJFlkinlg_10.mp4"]
+    same_examples = read_paths("test_video.txt")
+    same_examples = [p.split("/")[6] for p in same_examples] # Use the same examples as the generated ones
+    
     
     for video_path in video_files:
         entropy_val = process_video(video_path, args, image_processor, model, device)
         if entropy_val is not None:
             entropy_results.append(entropy_val)
+    
+    """for video_path in same_examples:
+        entropy_val = process_video(f"/data/stars/share/CelebV-HQ/path_to_videos_512_25fps_for_inf/train/{video_path}", args, image_processor, model, device)
+        if entropy_val is not None:
+            entropy_results.append(entropy_val)"""
 
     if not entropy_results:
         print("No entropy values were computed. Exiting.")
@@ -584,9 +611,9 @@ def main_dt():
 
 
 if __name__ == "__main__":
-    #main()
+    main()
     #main_dim()
-    main_dt()
+    #main_dt()
 
 # Example Usage:
 # python mov_variety_folder.py /data/stars/share/CelebV-HQ/path_to_videos_512_25fps_for_inf/train --num_videos 100

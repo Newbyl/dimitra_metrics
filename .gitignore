@@ -1,6 +1,6 @@
 silence_speech_metrics/seg_viz/mask
 eval
-
+masks/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -257,7 +257,7 @@ if __name__ == "__main__":
         model_name="jonathandinu/face-parsing",
         device="cuda",
         batch_size=1,
-        frame_resize=(512, 512),
+        frame_resize=(256, 256),
         frame_sampling_rate=1
     )
 
